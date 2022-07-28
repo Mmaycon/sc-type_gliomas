@@ -1,0 +1,113 @@
+# glioma IDHwt (Renan dataset)
+# Vou colocar no sc-type pela webtool
+load("/media/hd/renan/Mestrado/CNV/exp.rawdataGSM3828672.Rda")
+dim(exp.rawdata)
+class(exp.rawdata)
+exp.rawdata <- as.data.frame(exp.rawdata)
+exp.rawdata[1:3,1:3]
+range(exp.rawdata)
+save(exp.rawdata, file= "/media/hd/maycon/MESTRADO/Single_Cell/GBM_renan_dataset.rda")
+
+
+exp.rawdata$GENE_NAME <- rownames(exp.rawdata)
+exp.rawdata <- exp.rawdata[,c(7931,1:7930)] #deixando GENE_NAME como primeira coluna
+
+write.table(exp.rawdata, "/media/hd/maycon/MESTRADO/Single_Cell/GBM.normalized.txt", append = FALSE, sep = " ", dec = ".",
+            row.names = FALSE, col.names = TRUE)
+
+# já ta normalizado??? 
+
+
+library(dplyr)
+library(Seurat)
+library(patchwork)
+
+# sc-type pipeline
+# load libraries
+lapply(c("dplyr","Seurat","HGNChelper"), library, character.only = T)
+
+# Initialize the Seurat object with the raw (normalized data) - eu acho que ja ta normalizada por conta do range
+colnames(exp.rawdata) <- gsub("_", "-", colnames(exp.rawdata))
+rownames(exp.rawdata) <- gsub("_", "-", rownames(exp.rawdata))
+GBM_renan_Seuobj <- CreateSeuratObject(counts = exp.rawdata, min.cells = 3, min.features = 200)
+
+VlnPlot(GBM_renan_Seuobj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+
+dim(GBM_renan_Seuobj[["RNA"]]@data) #22197  7930
+GBM_renan_Seuobj[["percent.mt"]] <- PercentageFeatureSet(GBM_renan_Seuobj, pattern = "^MT-")
+#GBM_renan_Seuobj <- subset(GBM_renan_Seuobj, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 10)
+#dim(GBM_renan_Seuobj[["RNA"]]@data)  # 27719 100064
+
+# Vamos fazer sem aplicar algum QC
+
+
+GBM_renan_Seuobj <- FindVariableFeatures(GBM_renan_Seuobj, selection.method = "vst", nfeatures = 2000)
+
+# scale and run PCA
+GBM_renan_Seuobj <- ScaleData(GBM_renan_Seuobj, features = rownames(GBM_renan_Seuobj))
+GBM_renan_Seuobj <- RunPCA(GBM_renan_Seuobj, features = VariableFeatures(object = GBM_renan_Seuobj))
+
+# Check number of PC components (we selected 10 PCs for downstream analysis, based on Elbow plot)
+ElbowPlot(GBM_renan_Seuobj)
+
+# cluster and visualize
+GBM_renan_Seuobj <- FindNeighbors(GBM_renan_Seuobj, dims = 1:20)
+GBM_renan_Seuobj <- FindClusters(GBM_renan_Seuobj, resolution = 0.8)
+GBM_renan_Seuobj <- RunUMAP(GBM_renan_Seuobj, dims = 1:10)
+DimPlot(GBM_renan_Seuobj, reduction = "umap")
+
+
+
+
+# Cell type assignment
+
+# load gene set preparation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# load cell type annotation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+# DB file
+db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue = "Brain" # e.g. Immune system, Liver, Pancreas, Kidney, Eye, Brain
+
+# prepare gene sets
+gs_list = gene_sets_prepare(db_, tissue)
+
+
+# Assign cell types to each cluster
+
+# get cell-type by cell matrix
+es.max = sctype_score(scRNAseqData = GBM_renan_Seuobj[["RNA"]]@scale.data, scaled = TRUE, 
+                      gs = gs_list$gs_positive, gs2 = gs_list$gs_negative) 
+
+# NOTE: scRNAseqData parameter should correspond to your input scRNA-seq matrix. 
+# In case Seurat is used, it is either pbmc[["RNA"]]@scale.data (default), pbmc[["SCT"]]@scale.data, in case sctransform is used for normalization,
+# or pbmc[["integrated"]]@scale.data, in case a joint analysis of multiple single-cell datasets is performed.
+
+
+# merge by cluster
+cL_resutls = do.call("rbind", lapply(unique(GBM_renan_Seuobj@meta.data$seurat_clusters), function(cl){
+  es.max.cl = sort(rowSums(es.max[ ,rownames(GBM_renan_Seuobj@meta.data[GBM_renan_Seuobj@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+  head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(GBM_renan_Seuobj@meta.data$seurat_clusters==cl)), 10)
+}))
+sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)
+
+
+# set low-confident (low ScType score) clusters to "unknown"
+## gs2 = NULL when there is no negative marker
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] = "Unknown"
+print(sctype_scores[,1:3])
+
+GBM_renan_Seuobj@meta.data$customclassif = ""
+for(j in unique(sctype_scores$cluster)){
+  cl_type = sctype_scores[sctype_scores$cluster==j,]; 
+  GBM_renan_Seuobj@meta.data$customclassif[GBM_renan_Seuobj@meta.data$seurat_clusters == j] = as.character(cl_type$type[1])
+}
+
+DimPlot(GBM_renan_Seuobj, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'customclassif') 
+
+# HHHEEY !! O UMAP já sai com as possíveis Cancer STEM cells 
+
+library(ggplot2)
+ggsave("/media/hd/maycon/MESTRADO/Single_Cell/UMAP_GBM_renan_CSC.pdf",width = 12, height = 8)
