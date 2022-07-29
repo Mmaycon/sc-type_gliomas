@@ -1,30 +1,13 @@
-# glioma IDHwt (Renan dataset)
-# Vou colocar no sc-type pela webtool
-load("/media/hd/renan/Mestrado/CNV/exp.rawdataGSM3828672.Rda")
-dim(exp.rawdata)
-class(exp.rawdata)
-exp.rawdata <- as.data.frame(exp.rawdata)
-exp.rawdata[1:3,1:3]
-range(exp.rawdata)
-save(exp.rawdata, file= "/media/hd/maycon/MESTRADO/Single_Cell/GBM_renan_dataset.rda")
-
-
-exp.rawdata$GENE_NAME <- rownames(exp.rawdata)
-exp.rawdata <- exp.rawdata[,c(7931,1:7930)] #deixando GENE_NAME como primeira coluna
-
-write.table(exp.rawdata, "/media/hd/maycon/MESTRADO/Single_Cell/GBM.normalized.txt", append = FALSE, sep = " ", dec = ".",
-            row.names = FALSE, col.names = TRUE)
-
-# já ta normalizado??? 
-
+####################
+# sc-type pipeline #
 
 library(dplyr)
 library(Seurat)
 library(patchwork)
 
-# sc-type pipeline
-# load libraries
-lapply(c("dplyr","Seurat","HGNChelper"), library, character.only = T)
+# load scRNAsep matrix
+load("/media/hd/renan/Mestrado/CNV/exp.rawdataGSM3828672.Rda")
+dim(exp.rawdata) # 1 GBM IDHwt patient
 
 # Initialize the Seurat object with the raw (normalized data) - eu acho que ja ta normalizada por conta do range
 colnames(exp.rawdata) <- gsub("_", "-", colnames(exp.rawdata))
@@ -32,15 +15,10 @@ rownames(exp.rawdata) <- gsub("_", "-", rownames(exp.rawdata))
 GBM_renan_Seuobj <- CreateSeuratObject(counts = exp.rawdata, min.cells = 3, min.features = 200)
 
 VlnPlot(GBM_renan_Seuobj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
-
+# Let's proceed without any additional QC subset
 
 dim(GBM_renan_Seuobj[["RNA"]]@data) #22197  7930
 GBM_renan_Seuobj[["percent.mt"]] <- PercentageFeatureSet(GBM_renan_Seuobj, pattern = "^MT-")
-#GBM_renan_Seuobj <- subset(GBM_renan_Seuobj, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 10)
-#dim(GBM_renan_Seuobj[["RNA"]]@data)  # 27719 100064
-
-# Vamos fazer sem aplicar algum QC
-
 
 GBM_renan_Seuobj <- FindVariableFeatures(GBM_renan_Seuobj, selection.method = "vst", nfeatures = 2000)
 
@@ -56,9 +34,6 @@ GBM_renan_Seuobj <- FindNeighbors(GBM_renan_Seuobj, dims = 1:20)
 GBM_renan_Seuobj <- FindClusters(GBM_renan_Seuobj, resolution = 0.8)
 GBM_renan_Seuobj <- RunUMAP(GBM_renan_Seuobj, dims = 1:10)
 DimPlot(GBM_renan_Seuobj, reduction = "umap")
-
-
-
 
 # Cell type assignment
 
@@ -107,7 +82,4 @@ for(j in unique(sctype_scores$cluster)){
 
 DimPlot(GBM_renan_Seuobj, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'customclassif') 
 
-# HHHEEY !! O UMAP já sai com as possíveis Cancer STEM cells 
-
-library(ggplot2)
-ggsave("/media/hd/maycon/MESTRADO/Single_Cell/UMAP_GBM_renan_CSC.pdf",width = 12, height = 8)
+### END. 
